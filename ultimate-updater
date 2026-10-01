@@ -32,6 +32,56 @@ INTERNAL_SSH_FILE="$LOCAL_FILES/internal-ssh.sh"
 GLOBAL_UPDATE_SCRIPT="$LOCAL_FILES/global-update.sh"
 EXTERNAL_SELECTION_SCRIPT="$LOCAL_FILES/external-selection.sh"
 TARGET_SELECTION_SCRIPT="$LOCAL_FILES/target-selection.sh"
+SCHEDULE_CONFIG_FILE="${UU_CONFIG_FILE:-$LOCAL_FILES/update.conf}"
+SCHEDULE_CRON_FILE="${UU_SCHEDULE_CRON_FILE:-/etc/cron.d/ultimate-updater-schedule}"
+
+# steellz fork: unattended jobs from SCHEDULED_CHECK / SCHEDULED_UPDATE in update.conf.
+# Prints the configured 5-field cron schedule for key $1; invalid values are reported
+# and treated as off, so a typo can never produce a broken cron line.
+schedule_spec() {
+  local key="$1" value
+  value=$(awk -F'"' -v key="$key" '$0 ~ "^" key "=" {print $2; exit}' "$SCHEDULE_CONFIG_FILE" 2>/dev/null)
+  [[ -n "$value" ]] || return 0
+  if [[ "$value" =~ ^[0-9*/,-]+([[:space:]]+[0-9A-Za-z*/,-]+){4}$ ]]; then
+    printf '%s' "$value"
+  else
+    printf 'Ignoring invalid %s="%s" (expected 5 cron fields, e.g. "0 3 * * 0").\n' "$key" "$value" >&2
+  fi
+}
+
+schedule_apply() {
+  local check_spec update_spec content
+  check_spec=$(schedule_spec SCHEDULED_CHECK)
+  update_spec=$(schedule_spec SCHEDULED_UPDATE)
+  if [[ -z "$check_spec" && -z "$update_spec" ]]; then
+    rm -f -- "$SCHEDULE_CRON_FILE"
+    echo "No scheduled jobs (SCHEDULED_CHECK and SCHEDULED_UPDATE are empty)."
+    return 0
+  fi
+  content="# Managed by 'ultimate-updater schedule apply' from SCHEDULED_CHECK / SCHEDULED_UPDATE
+# in $SCHEDULE_CONFIG_FILE. Change those settings and re-run it; don't edit this file.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+"
+  if [[ -n "$check_spec" ]]; then
+    content+="$check_spec root RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /usr/local/sbin/ultimate-updater check >/dev/null 2>&1"$'\n'
+  fi
+  if [[ -n "$update_spec" ]]; then
+    content+="$update_spec root RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /usr/local/sbin/ultimate-updater update-all >/dev/null 2>&1"$'\n'
+  fi
+  printf '%s' "$content" > "$SCHEDULE_CRON_FILE.tmp" &&
+    chmod 0644 "$SCHEDULE_CRON_FILE.tmp" &&
+    mv -f -- "$SCHEDULE_CRON_FILE.tmp" "$SCHEDULE_CRON_FILE" || return 1
+  schedule_show
+}
+
+schedule_show() {
+  if [[ -f "$SCHEDULE_CRON_FILE" ]]; then
+    grep -vE '^(#|SHELL=|PATH=|$)' "$SCHEDULE_CRON_FILE"
+  else
+    echo "No scheduled jobs installed ($SCHEDULE_CRON_FILE does not exist)."
+  fi
+}
 
 configured_headless() {
   [[ "$(awk -F'\"' '/^IN_HEADLESS_MODE=/ {print $2; exit}' "$LOCAL_FILES/update.conf" 2>/dev/null)" == true ]]
@@ -136,6 +186,8 @@ Commands:
   status --json           Print the existing status JSON unchanged
   config set web-port PORT
                           Set the local Web UI port without using the Web UI
+  schedule [show|apply]   Show, or (re)install from update.conf, the cron jobs for
+                          SCHEDULED_CHECK / SCHEDULED_UPDATE (steellz fork)
   hardcore-test start    Start a persistent Hardcore-Test run
   hardcore-test status   Show the active or selected run status
   hardcore-test stop     Request a controlled stop
@@ -1420,6 +1472,13 @@ case "$command" in
     [[ "${2:-}" == set && "${3:-}" == web-port && $# -eq 4 ]] || { usage >&2; exit 2; }
     require_file "$WEB_UI_PORT_SCRIPT" "Web UI port helper" || exit 1
     "$WEB_UI_PORT_SCRIPT" set "$4"
+    ;;
+  schedule)
+    case "${2:-show}" in
+      show) [[ $# -le 2 ]] || { usage >&2; exit 2; }; schedule_show ;;
+      apply) [[ $# -eq 2 ]] || { usage >&2; exit 2; }; schedule_apply ;;
+      *) usage >&2; exit 2 ;;
+    esac
     ;;
   hardcore-test)
     [[ $# -ge 2 ]] || { usage >&2; exit 2; }

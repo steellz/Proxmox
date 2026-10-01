@@ -36,6 +36,7 @@ if [[ -f "$PRODUCT_METADATA_FILE" ]]; then
 fi
 PRODUCT_VERSION="${PRODUCT_VERSION:-5.1.3}"
 BETA_VERSION="${BETA_VERSION:-}"
+UU_REPO="${UU_REPO:-steellz/Proxmox}"
 VERSION="$PRODUCT_VERSION"
 TEMP_FOLDER="/root/Ultimate-Updater-Temp"
 TEMP_STATE_DIR="${UU_TEMP_STATE_DIR:-$LOCAL_FILES/temp}"
@@ -124,7 +125,7 @@ INSTALLED_BUILD_IDENTITY=$(UU_FORMAT_BUILD_IDENTITY "$INSTALLED_VERSION" "$INSTA
 # USED_BRANCH describes the installed source only. A bare -up is always the
 # stable master target; beta/develop require an explicit selector.
 BRANCH=master
-SERVER_URL="https://raw.githubusercontent.com/BassT23/Proxmox/$INSTALLED_BRANCH"
+SERVER_URL="https://raw.githubusercontent.com/$UU_REPO/$INSTALLED_BRANCH"
 DPKG_OPTIONS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 DPKG_OPTIONS_STRING="${DPKG_OPTIONS[*]}"
 HEADLESS=false
@@ -483,7 +484,7 @@ RUN_BRANCH_UPDATE () {
   local target_branch=$1 installer cache_buster
   cache_buster=$(date +%s)
 
-  if ! installer=$(DOWNLOAD_SHELL_FILE "https://raw.githubusercontent.com/BassT23/Proxmox/refs/heads/$target_branch/install.sh?uu_cache=$cache_buster"); then
+  if ! installer=$(DOWNLOAD_SHELL_FILE "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/refs/heads/$target_branch/install.sh?uu_cache=$cache_buster"); then
     echo -e "${RD:-}Unable to download the $target_branch installer.${CL:-}"
     return 1
   fi
@@ -616,11 +617,11 @@ UPDATE () {
     fi
   fi
   if [[ "${UU_NONINTERACTIVE:-false}" == true || ! -t 0 ]]; then
-    RUN_DOWNLOADED_INSTALLER "https://raw.githubusercontent.com/BassT23/Proxmox/refs/heads/$BRANCH/install.sh?uu_cache=$cache_buster" \
+    RUN_DOWNLOADED_INSTALLER "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/refs/heads/$BRANCH/install.sh?uu_cache=$cache_buster" \
       UU_TARGET_BRANCH="$BRANCH" UU_NONINTERACTIVE=true update
     return $?
   fi
-  RUN_DOWNLOADED_INSTALLER "https://raw.githubusercontent.com/BassT23/Proxmox/refs/heads/$BRANCH/install.sh?uu_cache=$cache_buster" \
+  RUN_DOWNLOADED_INSTALLER "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/refs/heads/$BRANCH/install.sh?uu_cache=$cache_buster" \
     UU_TARGET_BRANCH="$BRANCH" UU_UPGRADE_INTERACTIVE=true UU_INTERACTIVE_INSTALLER=true UU_NONINTERACTIVE=true update
   return $?
 }
@@ -657,7 +658,7 @@ FETCH_REMOTE_COMMIT() {
   local branch="$1"
   [[ "$branch" =~ ^(master|beta|develop)$ ]] || return 1
   curl -4 -sS --connect-timeout 5 --max-time 15 \
-    "https://api.github.com/repos/BassT23/Proxmox/commits/$branch" 2>/dev/null |
+    "https://api.github.com/repos/${UU_REPO:-steellz/Proxmox}/commits/$branch" 2>/dev/null |
     awk -F'"' '/"sha"[[:space:]]*:/ {print $4; exit}'
 }
 
@@ -665,7 +666,7 @@ FETCH_REMOTE_BETA() {
   local branch="$1"
   [[ "$branch" =~ ^(beta|develop)$ ]] || return 1
   curl -4 -sS --connect-timeout 5 --max-time 15 \
-    "https://raw.githubusercontent.com/BassT23/Proxmox/$branch/product-metadata.sh" 2>/dev/null |
+    "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/$branch/product-metadata.sh" 2>/dev/null |
     awk -F'"' '/^BETA_VERSION=/ {print $2; exit}'
 }
 

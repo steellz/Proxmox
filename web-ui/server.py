@@ -453,6 +453,8 @@ CONFIG_KEY_CATEGORIES = {
     "OCTOPRINT": "advanced", "DOCKER_COMPOSE": "advanced", "UNIFI": "advanced",
     "COMPOSE_PATH": "advanced",
     "INCLUDE_KERNEL": "deprecated",
+    # steellz fork: set in update.conf, applied with `ultimate-updater schedule apply`.
+    "SCHEDULED_CHECK": "internal", "SCHEDULED_UPDATE": "internal",
 }
 UI_ASSETS = {
     "/assets/ultimate-updater-header.png": ("ultimate-updater-header.png", "image/png"),

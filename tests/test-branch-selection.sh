@@ -40,6 +40,13 @@ source "$ROOT_DIR/config-merge.sh"
 MERGE_UPDATE_CONFIG "$work_dir/update.conf" "$work_dir/update.conf.dist" beta
 grep -Fqx 'USED_BRANCH="beta"    # could be "master/beta/develop"' "$work_dir/update.conf"
 
-grep -Fq 'https://raw.githubusercontent.com/BassT23/Proxmox/' "$ROOT_DIR/update.sh"
+grep -Fq 'https://raw.githubusercontent.com/$UU_REPO/' "$ROOT_DIR/update.sh"
+# steellz fork: no functional download may point at upstream, or a self-update
+# would replace the fork with BassT23's code.
+grep -Fqx 'UU_REPO="${UU_REPO:-steellz/Proxmox}"' "$ROOT_DIR/product-metadata.sh"
+if grep -nE '(raw\.githubusercontent\.com|api\.github\.com/repos|github\.com)/BassT23/Proxmox/(refs/|tarball/|releases/|commits/|\$)' \
+     "$ROOT_DIR/install.sh" "$ROOT_DIR/update.sh" "$ROOT_DIR/tag-filter.sh"; then
+  exit 1
+fi
 
 echo 'branch selection tests: PASS'

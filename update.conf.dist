@@ -37,6 +37,13 @@ URL_FOR_INTERNET_CHECK="google.com"
 LXC_START_DELAY="5"    # in secounds
 VM_START_DELAY="45"    # in secounds - for QEMU - not SSH
 
+# Unattended jobs (steellz fork). Set them on ONE node only: both run cluster-wide.
+# 5-field cron schedule, empty = off. Apply changes with: ultimate-updater schedule apply
+#   SCHEDULED_CHECK   read-only check of every target, e.g. "0 5 * * *" (daily 05:00)
+#   SCHEDULED_UPDATE  update every target (snapshots per SNAPSHOT=, never reboots), e.g. "0 3 * * 0"
+SCHEDULED_CHECK=""
+SCHEDULED_UPDATE=""
+
 
 ╔══════════════════════════════════════════════╗
 ║                Notification                  ║

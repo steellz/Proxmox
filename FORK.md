@@ -1,0 +1,58 @@
+# steellz fork of Ultimate Updater
+
+This is a modified copy of [BassT23/Proxmox](https://github.com/BassT23/Proxmox)
+(Ultimate Updater) for one homelab's Proxmox cluster. All credit for the
+updater belongs to BassT23 and its contributors. Like the original, this fork
+is licensed under the [GNU GPL v3](LICENSE). Report bugs in the updater itself
+upstream, not here.
+
+## What this fork changes
+
+GPLv3 §5(a) requires modified versions to say what changed and when. These are
+all the changes from upstream:
+
+**2026-10-01**, based on upstream 5.1.3 (`fddc551`):
+
+- **It updates itself from this fork.** `UU_REPO` in `product-metadata.sh`
+  (default `steellz/Proxmox`) is now the one place that sets where the
+  installer, self-update (`update -up`), version checks and component
+  downloads come from (`install.sh`, `update.sh`, `tag-filter.sh`).
+  Previously those pointed at upstream, so a self-update would have replaced
+  the fork with upstream's code. GitHub doesn't copy releases into forks, so
+  `master` now installs from the branch archive when there is no release.
+  Informational links (issues, docs, credits) still point upstream.
+- **New scheduled jobs: `SCHEDULED_CHECK` and `SCHEDULED_UPDATE`.** These
+  two settings in `update.conf` take a 5-field cron schedule; empty means off.
+  `ultimate-updater schedule apply` (also run by the installer) turns them
+  into `/etc/cron.d/ultimate-updater-schedule`, which runs
+  `ultimate-updater check` / `update-all` headless. Both run cluster-wide, so
+  set them on **one** node only. An invalid schedule is reported and ignored,
+  never written as a broken cron line. `ultimate-updater schedule show` lists
+  what's installed. In the Web UI the keys are `internal`: kept on save, but
+  not shown.
+- **Tests:** a new `tests/test-schedule-cron.sh`, and
+  `tests/test-branch-selection.sh` now fails if any functional download URL
+  points back at upstream.
+
+## Installing or switching a node to this fork
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/steellz/Proxmox/master/install.sh) update
+```
+
+On a node that already has upstream installed, `update` replaces the program
+files and keeps `update.conf`; new keys are merged in, empty. Use `install`
+on a fresh node. After that, `update -up` keeps updating from this fork.
+
+## Pulling in upstream fixes
+
+```bash
+git fetch upstream
+git merge upstream/master        # conflicts are most likely in install.sh / update.sh URLs
+bash tests/test-branch-selection.sh && bash tests/test-schedule-cron.sh
+git push origin master
+```
+
+Keep every functional URL on `$UU_REPO`; the branch-selection test checks this.
+Then run `update -up` on each node. It compares commits, not version numbers,
+so a merge installs even when upstream hasn't bumped its version.

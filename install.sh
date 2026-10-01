@@ -24,6 +24,7 @@ if [[ -f "$PRODUCT_METADATA_FILE" ]]; then
 fi
 PRODUCT_VERSION="${PRODUCT_VERSION:-5.1.3}"
 BETA_VERSION="${BETA_VERSION:-}"
+UU_REPO="${UU_REPO:-steellz/Proxmox}"
 case "$BRANCH" in
   master|beta|develop) ;;
   *) echo "Unsupported update branch: $BRANCH" >&2; exit 2 ;;
@@ -36,7 +37,7 @@ WEB_SERVICE_PATH="/etc/systemd/system/$WEB_SERVICE_NAME"
 INITIAL_INVENTORY_STATE_FILE="/var/lib/ultimate-updater/initial-inventory.state"
 INITIAL_INVENTORY_LOCK_FILE="/var/lib/ultimate-updater/initial-inventory.lock"
 TEMP_FOLDER="/root/Ultimate-Updater-Temp"
-SERVER_URL="https://raw.githubusercontent.com/BassT23/Proxmox/$BRANCH"
+SERVER_URL="https://raw.githubusercontent.com/$UU_REPO/$BRANCH"
 BUILD_METADATA_FILE="$LOCAL_FILES/build-metadata"
 ARCHIVE_COMMIT=""
 ARCHIVE_TAG=""
@@ -97,29 +98,31 @@ DOWNLOAD_ARCHIVE() {
   ARCHIVE_TAG=""
   ARCHIVE_VERSION=""
   ARCHIVE_BETA=""
-  if [[ "$BRANCH" == master ]]; then
-    release_json="$TEMP_FOLDER/release.json"
-    DOWNLOAD_FILE "https://api.github.com/repos/BassT23/Proxmox/releases/latest" "$release_json" text || return 1
-    asset_url=$(grep -m1 'browser_download_url' "$release_json" | cut -d: -f2- | tr -d '" ,')
-    [[ "$asset_url" =~ ^https:// ]] || { echo "GitHub release archive URL is unavailable." >&2; return 1; }
+  # GitHub doesn't copy releases into forks, so when the repo has no release,
+  # master installs from the branch archive like beta/develop do.
+  release_json="$TEMP_FOLDER/release.json"
+  if [[ "$BRANCH" == master ]] &&
+     DOWNLOAD_FILE "https://api.github.com/repos/${UU_REPO:-steellz/Proxmox}/releases/latest" "$release_json" text 2>/dev/null &&
+     asset_url=$(grep -m1 'browser_download_url' "$release_json" | cut -d: -f2- | tr -d '" ,') &&
+     [[ "$asset_url" =~ ^https:// ]]; then
     release_tag=$(grep -m1 '"tag_name"' "$release_json" | cut -d: -f2- | tr -d '" ,')
     [[ "$release_tag" =~ ^[A-Za-z0-9._/-]+$ ]] && ARCHIVE_TAG="$release_tag"
     DOWNLOAD_FILE "$asset_url" "$archive" archive || return 1
   else
-    DOWNLOAD_FILE "https://github.com/BassT23/Proxmox/tarball/$BRANCH" "$archive" archive || return 1
+    DOWNLOAD_FILE "https://github.com/${UU_REPO:-steellz/Proxmox}/tarball/$BRANCH" "$archive" archive || return 1
   fi
   archive_root=$(tar -tzf "$archive" 2>/dev/null | awk -F/ 'NF {print $1; exit}')
   if [[ "$archive_root" =~ ([0-9a-f]{7,40})$ ]]; then
     ARCHIVE_COMMIT="${BASH_REMATCH[1]}"
     if [[ ${#ARCHIVE_COMMIT} -ne 40 ]]; then
       ARCHIVE_COMMIT=$(curl -4 -sS --connect-timeout 5 --max-time 15 \
-        "https://api.github.com/repos/BassT23/Proxmox/commits/$ARCHIVE_COMMIT" 2>/dev/null |
+        "https://api.github.com/repos/${UU_REPO:-steellz/Proxmox}/commits/$ARCHIVE_COMMIT" 2>/dev/null |
         awk -F'"' '/"sha"[[:space:]]*:/ {print $4; exit}' || true)
     fi
     [[ "$ARCHIVE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || ARCHIVE_COMMIT=""
   elif [[ -n "$ARCHIVE_TAG" ]]; then
     ARCHIVE_COMMIT=$(curl -4 -sS --connect-timeout 5 --max-time 15 \
-      "https://api.github.com/repos/BassT23/Proxmox/commits/$ARCHIVE_TAG" 2>/dev/null |
+      "https://api.github.com/repos/${UU_REPO:-steellz/Proxmox}/commits/$ARCHIVE_TAG" 2>/dev/null |
       awk -F'"' '/"sha"[[:space:]]*:/ {print $4; exit}' || true)
     [[ "$ARCHIVE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || ARCHIVE_COMMIT=""
   fi
@@ -505,7 +508,7 @@ ${OR:-}Is it OK for you, or want to backup your files first?${CL:-}\n"
   if [[ -f /usr/local/bin/update ]] && [[ ! -f /usr/local/sbin/update ]]; then
     mkdir -p "$TEMP_FOLDER" || exit 1
     legacy_update=$(mktemp "$TEMP_FOLDER/update.sh.XXXXXX") || exit 1
-    DOWNLOAD_FILE "https://raw.githubusercontent.com/BassT23/Proxmox/$BRANCH/update.sh" "$legacy_update" shell || exit 1
+    DOWNLOAD_FILE "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/$BRANCH/update.sh" "$legacy_update" shell || exit 1
     mv -f -- "$legacy_update" "$LOCAL_FILES/update.sh"
     chmod 750 "$LOCAL_FILES/update.sh"
     ln -sf "$LOCAL_FILES/update.sh" /usr/local/sbin/update
@@ -659,6 +662,7 @@ INSTALL () {
     else
       cp "$TEMP_FILES"/update.conf $LOCAL_FILES/update.conf.dist
     fi
+    "$LOCAL_FILES/ultimate-updater" schedule apply >/dev/null || true
     WRITE_BUILD_METADATA "$BRANCH" "$ARCHIVE_COMMIT" "$ARCHIVE_TAG" "$ARCHIVE_VERSION" "$ARCHIVE_BETA" || exit 1
     cp "$TEMP_FILES"/README.md $LOCAL_FILES/README.md
     SETUP_WEB_SERVICE start
@@ -848,6 +852,7 @@ UPDATE () {
       mv "$TEMP_FILES"/ultimate-updater $LOCAL_FILES/ultimate-updater
       chmod 750 $LOCAL_FILES/ultimate-updater
       ln -sf $LOCAL_FILES/ultimate-updater /usr/local/sbin/ultimate-updater
+      "$LOCAL_FILES/ultimate-updater" schedule apply >/dev/null || true
     fi
     if [[ -f "$TEMP_FILES"/job-runner.sh ]]; then
       mv "$TEMP_FILES"/job-runner.sh $LOCAL_FILES/job-runner.sh

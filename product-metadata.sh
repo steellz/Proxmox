@@ -7,6 +7,11 @@
 PRODUCT_VERSION="5.1.3"
 BETA_VERSION="7"
 
+# steellz fork: the GitHub repo every download, self-update and version check
+# uses. Upstream is BassT23/Proxmox; this fork must not self-update from it,
+# or the fork's changes would be overwritten.
+UU_REPO="${UU_REPO:-steellz/Proxmox}"
+
 UU_SHORT_COMMIT() {
   local commit="${1:-}"
   [[ "$commit" =~ ^[0-9a-f]{40}$ ]] && printf '%s' "${commit:0:7}"

@@ -98,7 +98,7 @@ FETCH_REMOTE_VERSION() {
     : > "$body"
     http_code=$(curl -4 -sS -fSL --retry 0 --connect-timeout 3 --max-time "$max_time" \
       -D "$headers" -o "$body" -w '%{http_code}' \
-      "https://raw.githubusercontent.com/BassT23/Proxmox/$branch/$component" 2>/dev/null) || true
+      "https://raw.githubusercontent.com/${UU_REPO:-steellz/Proxmox}/$branch/$component" 2>/dev/null) || true
     if [[ -s "$body" ]]; then
       break
     fi

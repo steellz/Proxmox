@@ -65,13 +65,28 @@ schedule_spec() {
 }
 
 schedule_apply() {
-  local check_spec update_spec content
+  local check_spec update_spec content node here
   check_spec=$(schedule_spec SCHEDULED_CHECK)
   update_spec=$(schedule_spec SCHEDULED_UPDATE)
   schedule_remove_stock_check || return 1
   if [[ -z "$check_spec" && -z "$update_spec" ]]; then
     rm -f -- "$SCHEDULE_CRON_FILE"
     echo "No scheduled jobs (SCHEDULED_CHECK and SCHEDULED_UPDATE are empty)."
+    return 0
+  fi
+  # Cluster checks copy the checking node's update.conf to every node, so the schedule
+  # names the one node that runs it; anywhere else it's removed. Both jobs are
+  # cluster-wide, so running them on more than one node would overlap.
+  node=$(awk -F'"' '/^SCHEDULED_NODE=/ {print $2; exit}' "$SCHEDULE_CONFIG_FILE" 2>/dev/null)
+  here="${UU_SCHEDULE_HOSTNAME:-$(hostname -s)}"
+  if [[ ! "$node" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    rm -f -- "$SCHEDULE_CRON_FILE"
+    echo "Not installing scheduled jobs: set SCHEDULED_NODE to the one node that should run them (e.g. SCHEDULED_NODE=\"$here\")." >&2
+    return 0
+  fi
+  if [[ "$node" != "$here" ]]; then
+    rm -f -- "$SCHEDULE_CRON_FILE"
+    echo "Scheduled jobs run on $node (SCHEDULED_NODE), not on $here."
     return 0
   fi
   content="# Managed by 'ultimate-updater schedule apply' from SCHEDULED_CHECK / SCHEDULED_UPDATE

@@ -11,29 +11,30 @@ config="$WORK_DIR/update.conf"
 cron="$WORK_DIR/ultimate-updater-schedule"
 crontab="$WORK_DIR/crontab"
 : > "$crontab"
-run() { UU_LOCAL_FILES="$WORK_DIR" UU_CONFIG_FILE="$config" UU_SCHEDULE_CRON_FILE="$cron" UU_SYSTEM_CRONTAB="$crontab" bash "$ROOT_DIR/ultimate-updater" schedule "$@"; }
+run() { UU_LOCAL_FILES="$WORK_DIR" UU_CONFIG_FILE="$config" UU_SCHEDULE_CRON_FILE="$cron" UU_SYSTEM_CRONTAB="$crontab" UU_SCHEDULE_HOSTNAME="${HOST_NAME:-pve1}" bash "$ROOT_DIR/ultimate-updater" schedule "$@"; }
 
 # Both templates ship the keys, empty (off).
+grep -Fqx 'SCHEDULED_NODE=""' "$ROOT_DIR/update.conf.dist"
 grep -Fqx 'SCHEDULED_CHECK=""' "$ROOT_DIR/update.conf.dist"
 grep -Fqx 'SCHEDULED_UPDATE=""' "$ROOT_DIR/update.conf.dist"
 grep -Fqx 'SCHEDULED_CHECK=""' "$ROOT_DIR/update.conf"
 grep -Fqx 'SCHEDULED_UPDATE=""' "$ROOT_DIR/update.conf"
 
 # Off by default: nothing installed, and show says so.
-printf 'SCHEDULED_CHECK=""\nSCHEDULED_UPDATE=""\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK=""\nSCHEDULED_UPDATE=""\n' > "$config"
 out=$(run apply); grep -Fq 'No scheduled jobs' <<<"$out"
 [[ ! -e "$cron" ]]
 out=$(run show); grep -Fq 'No scheduled jobs installed' <<<"$out"
 
 # Check only.
-printf 'SCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE=""\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE=""\n' > "$config"
 run apply >/dev/null
 grep -Fqx '0 5 * * * root RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /usr/local/sbin/ultimate-updater check >/dev/null 2>&1' "$cron"
 if grep -Fq 'update-all' "$cron"; then exit 1; fi
 [[ "$(stat -c '%a' "$cron")" == 644 ]]
 
 # Both, and re-applying replaces rather than appends.
-printf 'SCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="0 3 * * 0"\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="0 3 * * 0"\n' > "$config"
 run apply >/dev/null
 run apply >/dev/null
 grep -Fqx '0 3 * * 0 root RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /usr/local/sbin/ultimate-updater update-all >/dev/null 2>&1' "$cron"
@@ -42,19 +43,33 @@ grep -Fqx '0 3 * * 0 root RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /usr/local/
 [[ $(run show | wc -l) -eq 2 ]]
 
 # A typo is reported and treated as off; the valid job is kept.
-printf 'SCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="sunday 3am"\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="sunday 3am"\n' > "$config"
 err=$(run apply 2>&1 >/dev/null)
 grep -Fq 'Ignoring invalid SCHEDULED_UPDATE="sunday 3am"' <<<"$err"
 grep -Fq 'ultimate-updater check' "$cron"
 if grep -Fq 'update-all' "$cron"; then exit 1; fi
 
 # Clearing both removes the file again.
-printf 'SCHEDULED_CHECK=""\nSCHEDULED_UPDATE=""\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK=""\nSCHEDULED_UPDATE=""\n' > "$config"
 run apply >/dev/null
 [[ ! -e "$cron" ]]
 
 # Unknown subcommand is rejected.
 if run bogus >/dev/null 2>&1; then exit 1; fi
+
+# Cluster checks copy update.conf to every node, so only SCHEDULED_NODE installs the jobs:
+# on any other node apply removes them, and with no node named it refuses.
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="0 3 * * 0"\n' > "$config"
+run apply >/dev/null
+[[ -e "$cron" ]]
+out=$(HOST_NAME=pve2 run apply)
+grep -Fq 'Scheduled jobs run on pve1 (SCHEDULED_NODE), not on pve2.' <<<"$out"
+[[ ! -e "$cron" ]]
+printf 'SCHEDULED_NODE=""\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE="0 3 * * 0"\n' > "$config"
+err=$(run apply 2>&1 >/dev/null)
+grep -Fq 'Not installing scheduled jobs: set SCHEDULED_NODE' <<<"$err"
+[[ ! -e "$cron" ]]
+grep -Fqx 'SCHEDULED_NODE=""' "$ROOT_DIR/update.conf"
 
 # Upstream's per-node daily check is removed from /etc/crontab (SCHEDULED_CHECK replaces
 # it); unrelated lines stay, a backup is kept, and a second run changes nothing.
@@ -65,7 +80,7 @@ SHELL=/bin/sh
 00 07,19 * * *  root    RUN_FROM_CRON=true UU_JOB_SOURCE=scheduler /etc/ultimate-updater/check-updates.sh
 12 03 * * * root /opt/vendor/check-updates.sh
 EOF
-printf 'SCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE=""\n' > "$config"
+printf 'SCHEDULED_NODE="pve1"\nSCHEDULED_CHECK="0 5 * * *"\nSCHEDULED_UPDATE=""\n' > "$config"
 out=$(run apply); grep -Fq "Removed upstream's per-node daily check" <<<"$out"
 if grep -Eq 'update -check|/etc/ultimate-updater/check-updates' "$crontab"; then exit 1; fi
 grep -Fq 'run-parts --report /etc/cron.hourly' "$crontab"

@@ -26,8 +26,15 @@ all the changes from upstream:
   `ultimate-updater schedule apply` (also run by the installer) turns them
   into `/etc/cron.d/ultimate-updater-schedule`, which runs
   `ultimate-updater check` / `update-all` headless. Both run cluster-wide, so
-  set them on **one** node only. An invalid schedule is reported and ignored,
-  never written as a broken cron line. `ultimate-updater schedule show` lists
+  they must run on **one** node only. That node is named in `SCHEDULED_NODE`,
+  because upstream's cluster check copies the checking node's `update.conf` to
+  every node (`check-updates.sh`, `CHECK_REMOTE_SCP … update.conf`, with no
+  restore). A schedule set on "just one node" therefore spreads to all of
+  them; on 2026-10-01 that briefly gave all four nodes the Sunday
+  `update-all`. On any node that isn't `SCHEDULED_NODE`, `schedule apply`
+  removes the jobs; with no node named it refuses. Set all three keys the same
+  everywhere. An invalid schedule is reported and ignored, never written as a
+  broken cron line. `ultimate-updater schedule show` lists
   what's installed. In the Web UI the keys are `internal`: kept on save, but
   not shown.
 - **Upstream's per-node daily check is removed.** Upstream's Welcome-Screen

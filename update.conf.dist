@@ -37,10 +37,13 @@ URL_FOR_INTERNET_CHECK="google.com"
 LXC_START_DELAY="5"    # in secounds
 VM_START_DELAY="45"    # in secounds - for QEMU - not SSH
 
-# Unattended jobs (steellz fork). Set them on ONE node only: both run cluster-wide.
-# 5-field cron schedule, empty = off. Apply changes with: ultimate-updater schedule apply
+# Unattended jobs (steellz fork). Both run cluster-wide, so they run on ONE node:
+# SCHEDULED_NODE. Cluster checks copy update.conf to every node, so set all three the
+# same everywhere; other nodes remove the jobs. Apply with: ultimate-updater schedule apply
+#   SCHEDULED_NODE    hostname of the node that runs them, e.g. "pve1"
 #   SCHEDULED_CHECK   read-only check of every target, e.g. "0 5 * * *" (daily 05:00)
 #   SCHEDULED_UPDATE  update every target (snapshots per SNAPSHOT=, never reboots), e.g. "0 3 * * 0"
+SCHEDULED_NODE=""
 SCHEDULED_CHECK=""
 SCHEDULED_UPDATE=""
 

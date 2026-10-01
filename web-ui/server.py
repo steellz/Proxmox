@@ -454,7 +454,7 @@ CONFIG_KEY_CATEGORIES = {
     "COMPOSE_PATH": "advanced",
     "INCLUDE_KERNEL": "deprecated",
     # steellz fork: set in update.conf, applied with `ultimate-updater schedule apply`.
-    "SCHEDULED_CHECK": "internal", "SCHEDULED_UPDATE": "internal",
+    "SCHEDULED_NODE": "internal", "SCHEDULED_CHECK": "internal", "SCHEDULED_UPDATE": "internal",
     "HEALTH_CHECK": "internal", "AUTO_ROLLBACK": "internal", "HEALTH_CHECK_WAIT": "internal",
 }
 UI_ASSETS = {

@@ -641,21 +641,22 @@ PY
 
 STATUS_MODEL_UPDATE_RESULT() {
   local status_file="${STATUS_MODEL_FILE:-$LOCAL_FILES/status.json}"
-  local target_id="$1" update_status="$2" exit_code="$3"
+  # steellz fork: optional $4 is a human-readable message (e.g. health-gate rollback).
+  local target_id="$1" update_status="$2" exit_code="$3" message="${4:-}"
   local status_lock_file="${status_file}.lock" status_lock_fd
   exec {status_lock_fd}>"$status_lock_file" || return 1
   if ! flock -x "$status_lock_fd"; then
     exec {status_lock_fd}>&-
     return 1
   fi
-  python3 - "$status_file" "$target_id" "$update_status" "$exit_code" <<'PY'
+  python3 - "$status_file" "$target_id" "$update_status" "$exit_code" "$message" <<'PY'
 import json
 import os
 import sys
 import tempfile
 from datetime import datetime, timezone
 
-status_file, target_id, update_status, exit_code = sys.argv[1:]
+status_file, target_id, update_status, exit_code, message = sys.argv[1:]
 try:
     with open(status_file, encoding="utf-8") as source:
         payload = json.load(source)
@@ -682,6 +683,8 @@ if isinstance(existing_updates, dict):
 last_update = {"status": update_status, "timestamp": timestamp, "exit_code": int(exit_code)}
 if pending_before is not None:
     last_update["pending_before"] = pending_before
+if message:
+    last_update["message"] = message
 record["last_update"] = last_update
 payload["generated_at"] = timestamp
 directory = os.path.dirname(os.path.abspath(status_file)) or "."

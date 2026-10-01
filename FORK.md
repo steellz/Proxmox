@@ -36,7 +36,24 @@ all the changes from upstream:
   apply` removes those lines, keeping a timestamped `/etc/crontab.bak.*`, and
   the installer no longer calls `ensure_scheduled_check_cron`. The function
   itself is kept for upstream's test.
-- **Tests:** a new `tests/test-schedule-cron.sh`, and
+- **Health check + auto-rollback after each guest update.** A running LXC or VM
+  is probed just before its update and again afterwards. It must still be
+  running, have no *new* failed systemd units (units failing before the update
+  don't count), every Docker container that was running must be running again,
+  and a VM's guest agent must still answer. Services get `HEALTH_CHECK_WAIT`
+  seconds (default 120) to settle. If the guest isn't healthy by then and
+  `AUTO_ROLLBACK="true"`, it is stopped, rolled back to the `Update_*`
+  snapshot taken just before the update, started and re-checked. The update is
+  recorded as `failed`, with exit code 75 for "rolled back" or 76 for "nothing
+  to roll back to", and a plain-language `last_update.message` in
+  `status.json` (`STATUS_MODEL_UPDATE_RESULT` has an optional 4th argument
+  for it). Settings: `HEALTH_CHECK`, `AUTO_ROLLBACK` and `HEALTH_CHECK_WAIT`
+  (Web UI category `internal`). Hosts are not gated: they have no snapshot to
+  roll back to. The code is the `HEALTH_*` block in `update.sh`, hooked into
+  the running-guest branches of `CONTAINER_UPDATE_START` / `VM_UPDATE_START`.
+  Verified end-to-end on a throwaway container: a newly failing service was
+  rolled back and the container was healthy again.
+- **Tests:** new `tests/test-schedule-cron.sh` and `tests/test-health-gate.sh`, and
   `tests/test-branch-selection.sh` now fails if any functional download URL
   points back at upstream.
 

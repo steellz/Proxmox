@@ -738,6 +738,13 @@ READ_CONFIG () {
   KEEP_SNAPSHOT=$(awk -F'"' '/^KEEP_SNAPSHOTS=/ {print $2}' "$CONFIG_FILE")
   KEEP_SNAPSHOT="${KEEP_SNAPSHOT:-$(awk -F'"' '/^KEEP_SNAPSHOT=/ {print $2}' "$CONFIG_FILE")}"
   KEEP_SNAPSHOT="${KEEP_SNAPSHOT:-3}"
+  # steellz fork: post-update health gate (see HEALTH_GATE).
+  HEALTH_CHECK=$(awk -F'"' '/^HEALTH_CHECK=/ {print $2}' "$CONFIG_FILE")
+  HEALTH_CHECK="${HEALTH_CHECK:-true}"
+  AUTO_ROLLBACK=$(awk -F'"' '/^AUTO_ROLLBACK=/ {print $2}' "$CONFIG_FILE")
+  AUTO_ROLLBACK="${AUTO_ROLLBACK:-true}"
+  HEALTH_CHECK_WAIT=$(awk -F'"' '/^HEALTH_CHECK_WAIT=/ {print $2}' "$CONFIG_FILE")
+  [[ "$HEALTH_CHECK_WAIT" =~ ^[0-9]+$ ]] || HEALTH_CHECK_WAIT=120
   BACKUP=$(awk -F'"' '/^BACKUP=/ {print $2}' "$CONFIG_FILE")
   BACKUP_LXC_MP=$(awk -F'"' '/^BACKUP_LXC_MP=/ {print $2}' "$CONFIG_FILE")
   BACKUP_MODE=$(awk -F'"' '/^BACKUP_MODE=/ {print $2}' "$CONFIG_FILE")
@@ -851,7 +858,8 @@ CONTAINER_BACKUP () {
 
   if [[ "$snapshot_requested" == true || "$backup_requested" == true ]]; then
     if [[ "$snapshot_requested" == true ]]; then
-      if RUN_PROXMOX_CAPTURE pct snapshot "$CONTAINER" "Update_$(date '+%Y%m%d_%H%M%S')"; then
+      UU_UPDATE_SNAPSHOT="Update_$(date '+%Y%m%d_%H%M%S')"  # steellz fork: HEALTH_GATE rollback target
+      if RUN_PROXMOX_CAPTURE pct snapshot "$CONTAINER" "$UU_UPDATE_SNAPSHOT"; then
         snapshot_output="$PROXMOX_CAPTURE_OUTPUT"
         echo -e "✅${GN:-} Snapshot created${CL:-}"
         echo -e "ℹ ${GN:-} Delete old snapshots${CL:-}"
@@ -861,6 +869,7 @@ CONTAINER_BACKUP () {
         done
       echo -e "✅${GN:-} Done${CL:-}"
       else
+        UU_UPDATE_SNAPSHOT=""
         snapshot_output="$PROXMOX_CAPTURE_OUTPUT"
         if grep -Eqi 'snapshot feature is not available|snapshot[^[:alnum:]]*(feature )?(is )?(not available|unsupported|not supported)|not supported[^[:alnum:]]*snapshot' <<< "$snapshot_output"; then
           echo -e "⚠️${OR:-} Snapshot not supported for LXC $CONTAINER${CL:-}"
@@ -914,7 +923,8 @@ VM_BACKUP () {
 
   if [[ "$snapshot_requested" == true || "$backup_requested" == true ]]; then
     if [[ "$snapshot_requested" == true ]]; then
-      if RUN_PROXMOX_CAPTURE qm snapshot "$VM" "Update_$(date '+%Y%m%d_%H%M%S')"; then
+      UU_UPDATE_SNAPSHOT="Update_$(date '+%Y%m%d_%H%M%S')"  # steellz fork: HEALTH_GATE rollback target
+      if RUN_PROXMOX_CAPTURE qm snapshot "$VM" "$UU_UPDATE_SNAPSHOT"; then
         snapshot_output="$PROXMOX_CAPTURE_OUTPUT"
         echo -e "✅${GN:-} Snapshot created${CL:-}"
         echo -e "ℹ ${GN:-} Delete old snapshot(s)${CL:-}"
@@ -924,6 +934,7 @@ VM_BACKUP () {
         done
       echo -e "✅${GN:-} Done${CL:-}"
       else
+        UU_UPDATE_SNAPSHOT=""
         snapshot_output="$PROXMOX_CAPTURE_OUTPUT"
         if grep -Eqi 'snapshot feature is not available|snapshot[^[:alnum:]]*(feature )?(is )?(not available|unsupported|not supported)|not supported[^[:alnum:]]*snapshot' <<< "$snapshot_output"; then
           echo -e "⚠️${OR:-} Snapshot not supported for VM $VM; continuing without snapshot${CL:-}"
@@ -986,6 +997,142 @@ USER_SCRIPTS_VM () {
     ssh -q -p "$SSH_VM_PORT" -tt "$USER"@"$IP" "rm -rf $LOCAL_FILES || true"
     echo -e "\n*** User scripts finished ***\n"
   fi
+}
+
+############################################################
+# steellz fork: post-update health gate + auto-rollback    #
+############################################################
+# A running guest is probed just before its update and again afterwards. After the
+# update it must still be running, have no NEW failed systemd units (ones failing
+# before the update don't count), and every Docker container that was running must be
+# running again; a VM's guest agent must still answer. Services get HEALTH_CHECK_WAIT
+# seconds to settle. If the guest isn't healthy by then and AUTO_ROLLBACK is on, it is
+# stopped, rolled back to the snapshot taken just before the update, started and
+# re-checked. Either way the update is recorded as failed with a plain-language
+# message in status.json (last_update.message), which the Homelab Watchdog reports.
+# Exit codes: 75 = rolled back, 76 = unhealthy but nothing to roll back to.
+HEALTH_PROBE_SCRIPT='if command -v systemctl >/dev/null 2>&1; then systemctl list-units --state=failed --no-legend --plain 2>/dev/null | while read -r u _; do [ -n "$u" ] && echo "failed:$u"; done; fi; if command -v docker >/dev/null 2>&1; then docker ps --filter status=running --format "docker:{{.Names}}" 2>/dev/null; fi; true'
+
+# Prints one line per fact: state:<status>, agent:down, failed:<unit>, docker:<name>.
+HEALTH_PROBE () {
+  local kind="$1" id="$2" state out
+  if [[ "$kind" == lxc ]]; then
+    state=$(pct status "$id" 2>/dev/null | awk '{print $2}')
+  else
+    state=$(qm status "$id" 2>/dev/null | awk '{print $2}')
+  fi
+  echo "state:${state:-unknown}"
+  [[ "$state" == running ]] || return 0
+  if [[ "$kind" == lxc ]]; then
+    timeout 60 pct exec "$id" -- sh -c "$HEALTH_PROBE_SCRIPT" 2>/dev/null
+  else
+    if ! timeout 20 qm guest cmd "$id" ping >/dev/null 2>&1; then
+      echo "agent:down"
+      return 0
+    fi
+    out=$(timeout 60 qm guest exec "$id" --timeout 50 -- sh -c "$HEALTH_PROBE_SCRIPT" 2>/dev/null) || return 0
+    python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin).get("out-data", ""))' <<<"$out" 2>/dev/null
+  fi
+  return 0
+}
+
+# Prints what got worse between two probes, one problem per line; nothing = healthy.
+HEALTH_PROBLEMS () {
+  local before="$1" after="$2" line
+  if ! grep -qx 'state:running' <<<"$after"; then
+    echo "not running ($(sed -n 's/^state://p' <<<"$after"))"
+    return
+  fi
+  if grep -qx 'agent:down' <<<"$after"; then
+    echo "guest agent stopped answering"
+    return
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && echo "systemd unit ${line#failed:} failed"
+  done < <(comm -13 <(grep '^failed:' <<<"$before" | sort) <(grep '^failed:' <<<"$after" | sort))
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && echo "Docker container ${line#docker:} is no longer running"
+  done < <(comm -23 <(grep '^docker:' <<<"$before" | sort) <(grep '^docker:' <<<"$after" | sort))
+  return 0
+}
+
+# Polls until healthy or HEALTH_CHECK_WAIT runs out; prints the last problems.
+HEALTH_WAIT_HEALTHY () {
+  local kind="$1" id="$2" before="$3" deadline problems
+  deadline=$((SECONDS + HEALTH_CHECK_WAIT))
+  while :; do
+    problems=$(HEALTH_PROBLEMS "$before" "$(HEALTH_PROBE "$kind" "$id")")
+    if [[ -z "$problems" ]] || (( SECONDS >= deadline )); then
+      printf '%s' "$problems"
+      return 0
+    fi
+    sleep "${HEALTH_POLL_INTERVAL:-10}"
+  done
+}
+
+HEALTH_BASELINE () {
+  UU_HEALTH_BEFORE=""
+  UU_UPDATE_SNAPSHOT=""
+  [[ "${HEALTH_CHECK:-true}" == true ]] || return 0
+  UU_HEALTH_BEFORE=$(HEALTH_PROBE "$1" "$2")
+}
+
+HEALTH_ROLLBACK () {
+  local kind="$1" id="$2" snapshot="$3" tool=pct output
+  [[ "$kind" == vm ]] && tool=qm
+  output=$({ "$tool" stop "$id" >/dev/null 2>&1 || true
+             "$tool" rollback "$id" "$snapshot" && "$tool" start "$id"; } 2>&1) || {
+    HEALTH_ROLLBACK_ERROR=$(tail -n 3 <<<"$output" | tr '\n' ' ')
+    return 1
+  }
+}
+
+HEALTH_RECORD () {
+  local id="$1" code="$2" message="$3"
+  UPDATE_FAILURE=true
+  if declare -f STATUS_MODEL_UPDATE_RESULT >/dev/null 2>&1; then
+    STATUS_MODEL_UPDATE_RESULT "$id" failed "$code" "$message" || true
+  fi
+  printf '%s : health gate\nError code:   %s\nError output: %s\n\n' "$id" "$code" "$message" \
+    >> "${ERROR_LOG_FILE:-/dev/null}" 2>/dev/null || true
+}
+
+HEALTH_GATE () {
+  local kind="$1" id="$2" label problems after message snapshot="${UU_UPDATE_SNAPSHOT:-}"
+  label="$([[ "$kind" == lxc ]] && echo LXC || echo VM) $id"
+  [[ "${HEALTH_CHECK:-true}" == true ]] || return 0
+  if ! grep -qx 'state:running' <<<"${UU_HEALTH_BEFORE:-}" || grep -qx 'agent:down' <<<"$UU_HEALTH_BEFORE"; then
+    echo -e "ℹ ${OR:-} Health check skipped for $label (it couldn't be probed before the update)${CL:-}\n"
+    return 0
+  fi
+  echo -e "🩺${OR:-} Health check for $label (up to ${HEALTH_CHECK_WAIT}s)${CL:-}"
+  problems=$(HEALTH_WAIT_HEALTHY "$kind" "$id" "$UU_HEALTH_BEFORE")
+  if [[ -z "$problems" ]]; then
+    echo -e "✅${GN:-} $label is healthy after the update${CL:-}\n"
+    return 0
+  fi
+  problems=$(paste -sd ';' <<<"$problems" | sed 's/;/; /g')
+  echo -e "❌${RD:-} $label is unhealthy after the update: $problems${CL:-}"
+  if [[ "${AUTO_ROLLBACK:-true}" != true || -z "$snapshot" ]]; then
+    message="Health check failed after the update: $problems. $([[ -z "$snapshot" ]] && echo "There was no pre-update snapshot to roll back to" || echo "AUTO_ROLLBACK is off"), so it was left as is."
+    echo -e "${RD:-}$message${CL:-}\n"
+    HEALTH_RECORD "$id" 76 "$message"
+    return 1
+  fi
+  echo -e "↩️ ${OR:-} Rolling back $label to snapshot $snapshot${CL:-}"
+  if HEALTH_ROLLBACK "$kind" "$id" "$snapshot"; then
+    after=$(HEALTH_WAIT_HEALTHY "$kind" "$id" "$UU_HEALTH_BEFORE")
+    if [[ -z "$after" ]]; then
+      message="Health check failed after the update: $problems. Rolled back to $snapshot and it is healthy again, so the update was undone."
+    else
+      message="Health check failed after the update: $problems. Rolled back to $snapshot, but it is still unhealthy: $(paste -sd ';' <<<"$after" | sed 's/;/; /g')."
+    fi
+  else
+    message="Health check failed after the update: $problems. Rolling back to $snapshot FAILED: ${HEALTH_ROLLBACK_ERROR:-unknown error}."
+  fi
+  echo -e "${OR:-}$message${CL:-}\n"
+  HEALTH_RECORD "$id" 75 "$message"
+  return 1
 }
 
 # Script-only mode is enabled by placing a .script-only marker next to the
@@ -1655,7 +1802,9 @@ CONTAINER_UPDATE_START () {
         echo -e "⏩${BL:-} Skipped LXC $CONTAINER because stopped containers are disabled${CL:-}\n\n"
       elif [[ "$STATUS" == "status: running" && "$RUNNING_CONTAINER" == true ]]; then
         SINGLE_TARGET_EXECUTED=true
+        HEALTH_BASELINE lxc "$CONTAINER"
         UPDATE_CONTAINER "$CONTAINER"
+        HEALTH_GATE lxc "$CONTAINER" || true
         CAPTURE_POST_UPDATE_STATUS "$CONTAINER" ccontainer
         CCONTAINER=""
       elif [[ "$STATUS" == "status: running" && "$RUNNING_CONTAINER" != true ]]; then
@@ -1878,7 +2027,9 @@ VM_UPDATE_START () {
         echo -e "⏩${BL:-} Skipped VM $VM because stopped VMs are disabled${CL:-}\n\n"
       elif [[ "$STATUS" == "status: running" && "$RUNNING_VM" == true ]]; then
         SINGLE_TARGET_EXECUTED=true
+        HEALTH_BASELINE vm "$VM"
         UPDATE_VM "$VM"
+        HEALTH_GATE vm "$VM" || true
         CAPTURE_POST_UPDATE_STATUS "$VM" cvm
         CVM=""
       elif [[ "$STATUS" == "status: running" && "$RUNNING_VM" != true ]]; then

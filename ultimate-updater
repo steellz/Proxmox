@@ -34,6 +34,21 @@ EXTERNAL_SELECTION_SCRIPT="$LOCAL_FILES/external-selection.sh"
 TARGET_SELECTION_SCRIPT="$LOCAL_FILES/target-selection.sh"
 SCHEDULE_CONFIG_FILE="${UU_CONFIG_FILE:-$LOCAL_FILES/update.conf}"
 SCHEDULE_CRON_FILE="${UU_SCHEDULE_CRON_FILE:-/etc/cron.d/ultimate-updater-schedule}"
+SCHEDULE_SYSTEM_CRONTAB="${UU_SYSTEM_CRONTAB:-/etc/crontab}"
+# Upstream's per-node daily check, added to /etc/crontab by its welcome-screen option.
+STOCK_CHECK_CRON_RE='(/usr/local/sbin/update[[:space:]]+-check|/etc/ultimate-updater/check-updates[.]sh)([[:space:]]|$)'
+
+# steellz fork: SCHEDULED_CHECK replaces upstream's per-node daily check, so remove that
+# from /etc/crontab (with a timestamped backup) and the same targets aren't checked twice.
+schedule_remove_stock_check() {
+  local crontab="$SCHEDULE_SYSTEM_CRONTAB"
+  grep -Eq "$STOCK_CHECK_CRON_RE" "$crontab" 2>/dev/null || return 0
+  cp -p -- "$crontab" "$crontab.bak.$(date +%Y%m%d%H%M%S)" || return 1
+  grep -Ev "$STOCK_CHECK_CRON_RE" "$crontab" > "$crontab.uu-tmp" || true
+  chmod --reference="$crontab" "$crontab.uu-tmp" 2>/dev/null || true
+  mv -f -- "$crontab.uu-tmp" "$crontab" || return 1
+  echo "Removed upstream's per-node daily check from $crontab (SCHEDULED_CHECK replaces it)."
+}
 
 # steellz fork: unattended jobs from SCHEDULED_CHECK / SCHEDULED_UPDATE in update.conf.
 # Prints the configured 5-field cron schedule for key $1; invalid values are reported
@@ -53,6 +68,7 @@ schedule_apply() {
   local check_spec update_spec content
   check_spec=$(schedule_spec SCHEDULED_CHECK)
   update_spec=$(schedule_spec SCHEDULED_UPDATE)
+  schedule_remove_stock_check || return 1
   if [[ -z "$check_spec" && -z "$update_spec" ]]; then
     rm -f -- "$SCHEDULE_CRON_FILE"
     echo "No scheduled jobs (SCHEDULED_CHECK and SCHEDULED_UPDATE are empty)."

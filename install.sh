@@ -933,7 +933,8 @@ UPDATE () {
           apt-get install screenfetch -y || true
         fi
       fi
-      ensure_scheduled_check_cron /etc/crontab false
+      # steellz fork: SCHEDULED_CHECK replaces the stock per-node check cron
+      # (ensure_scheduled_check_cron); the `schedule apply` run after installing the CLI removed it.
     else
       rm -rf "$TEMP_FILES"/welcome-screen.sh || true
       rm -rf "$TEMP_FILES"/check-updates.sh || true
@@ -1125,7 +1126,8 @@ WELCOME_SCREEN_INSTALL () {
   fi
   chmod +x /etc/update-motd.d/01-welcome-screen
   if ! [[ -f $LOCAL_FILES/check-output ]]; then touch $LOCAL_FILES/check-output; fi
-  ensure_scheduled_check_cron /etc/crontab
+  # steellz fork: no stock per-node check cron; SCHEDULED_CHECK (one node) covers the cluster.
+  "$LOCAL_FILES/ultimate-updater" schedule apply >/dev/null || true
   # Fetch tool install (neofetch or screenfetch)
   if ! command -v neofetch >/dev/null 2>&1 && ! command -v screenfetch >/dev/null 2>&1; then
     echo -e "${OR:-}  Install neofetch or screenfetch?${CL:-}"

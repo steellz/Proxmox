@@ -30,6 +30,12 @@ all the changes from upstream:
   never written as a broken cron line. `ultimate-updater schedule show` lists
   what's installed. In the Web UI the keys are `internal`: kept on save, but
   not shown.
+- **Upstream's per-node daily check is removed.** Upstream's Welcome-Screen
+  option adds `update -check` / `check-updates.sh` to each node's
+  `/etc/crontab`, which would overlap with `SCHEDULED_CHECK`. `schedule
+  apply` removes those lines, keeping a timestamped `/etc/crontab.bak.*`, and
+  the installer no longer calls `ensure_scheduled_check_cron`. The function
+  itself is kept for upstream's test.
 - **Tests:** a new `tests/test-schedule-cron.sh`, and
   `tests/test-branch-selection.sh` now fails if any functional download URL
   points back at upstream.
